@@ -196,7 +196,7 @@ describe('PtyHandler', () => {
   })
 
   it.skipIf(process.platform === 'win32')(
-    'enables shell-ready marker env for delivery-hinted startup commands',
+    'does not emit shell-ready markers for renderer-delivered startup commands',
     async () => {
       const oldShell = process.env.SHELL
       const oldHome = process.env.HOME
@@ -207,6 +207,7 @@ describe('PtyHandler', () => {
       try {
         await dispatcher.callRequest('pty.spawn', {
           env: { HOME: homeDir },
+          command: 'echo renderer-owned',
           startupCommandDelivery: 'shell-ready'
         })
       } finally {
@@ -226,12 +227,12 @@ describe('PtyHandler', () => {
       const spawnOptions = mockPtySpawn.mock.calls[0]?.[2] as
         | { env?: Record<string, string> }
         | undefined
-      expect(spawnOptions?.env?.ORCA_SHELL_READY_MARKER).toBe('1')
+      expect(spawnOptions?.env?.ORCA_SHELL_READY_MARKER).not.toBe('1')
     }
   )
 
   it.skipIf(process.platform === 'win32')(
-    'enables shell-ready marker env for Codex native prefill commands',
+    'does not emit shell-ready markers for renderer-delivered Codex native prefill commands',
     async () => {
       const oldShell = process.env.SHELL
       const oldHome = process.env.HOME
@@ -243,6 +244,43 @@ describe('PtyHandler', () => {
         await dispatcher.callRequest('pty.spawn', {
           env: { HOME: homeDir },
           command: "codex --prefill 'linked issue context'"
+        })
+      } finally {
+        if (oldShell === undefined) {
+          delete process.env.SHELL
+        } else {
+          process.env.SHELL = oldShell
+        }
+        if (oldHome === undefined) {
+          delete process.env.HOME
+        } else {
+          process.env.HOME = oldHome
+        }
+        rmSync(homeDir, { recursive: true, force: true })
+      }
+
+      const spawnOptions = mockPtySpawn.mock.calls[0]?.[2] as
+        | { env?: Record<string, string> }
+        | undefined
+      expect(spawnOptions?.env?.ORCA_SHELL_READY_MARKER).not.toBe('1')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'enables shell-ready marker env for provider-delivered startup commands',
+    async () => {
+      const oldShell = process.env.SHELL
+      const oldHome = process.env.HOME
+      const homeDir = mkdtempSync(join(tmpdir(), 'relay-provider-ready-env-'))
+
+      process.env.SHELL = '/bin/bash'
+      process.env.HOME = homeDir
+      try {
+        await dispatcher.callRequest('pty.spawn', {
+          env: { HOME: homeDir },
+          command: 'echo provider-owned',
+          commandDelivery: 'provider',
+          startupCommandDelivery: 'shell-ready'
         })
       } finally {
         if (oldShell === undefined) {
@@ -370,6 +408,12 @@ describe('PtyHandler', () => {
         id: 'pty-1',
         data: '\x1b]777;orca-shell-ready'
       })
+
+      const result = await dispatcher.callRequest('pty.attach', {
+        id: 'pty-1',
+        suppressReplayNotification: true
+      })
+      expect(result).toEqual({ replay: '\x1b]777;orca-shell-ready' })
     }
   )
 

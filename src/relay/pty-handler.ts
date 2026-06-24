@@ -246,6 +246,13 @@ export class PtyHandler {
     }
   }
 
+  private appendReplayBuffer(managed: ManagedPty, data: string): void {
+    managed.buffered += data
+    if (managed.buffered.length > REPLAY_BUFFER_MAX) {
+      managed.buffered = managed.buffered.slice(-REPLAY_BUFFER_MAX)
+    }
+  }
+
   private releaseStartupCommand(managed: ManagedPty): void {
     this.clearStartupCommandTimer(managed)
     managed.startupCommand = undefined
@@ -273,6 +280,7 @@ export class PtyHandler {
     if (startup.scanState) {
       const heldBytes = drainShellReadyHeldBytes(startup.scanState)
       if (heldBytes) {
+        this.appendReplayBuffer(managed, heldBytes)
         this.enqueuePtyOutput(managed.id, heldBytes)
       }
     }
@@ -295,10 +303,7 @@ export class PtyHandler {
           this.scheduleStartupCommandDelivery(managed, STARTUP_COMMAND_WRITE_DELAY_MS)
         }
       }
-      managed.buffered += data
-      if (managed.buffered.length > REPLAY_BUFFER_MAX) {
-        managed.buffered = managed.buffered.slice(-REPLAY_BUFFER_MAX)
-      }
+      this.appendReplayBuffer(managed, data)
       this.enqueuePtyOutput(managed.id, data)
     })
     managed.pty.onExit(({ exitCode }: { exitCode: number }) => {
@@ -503,15 +508,19 @@ export class PtyHandler {
     // because no renderer TerminalPane exists to type the command.
     const paneKey = typeof env?.ORCA_PANE_KEY === 'string' ? env.ORCA_PANE_KEY : undefined
     const command = typeof params.command === 'string' ? params.command : undefined
+    const commandDelivery = params.commandDelivery === 'provider' ? 'provider' : 'renderer'
+    const shouldProviderDeliverCommand = commandDelivery === 'provider' && command !== undefined
     const spawnEnv = this.buildSpawnEnv(env, { id, paneKey, shell, command })
-    // Why: only explicit shell-ready hints are trusted here; native Codex
-    // prefill detection still auto-enables readiness through the predicate.
+    // Why: only the provider-delivery path scans and strips this internal
+    // marker; renderer-delivered commands must not leak it to the terminal.
     const shellLaunch = getRelayShellLaunchConfig(shell, spawnEnv, process.platform, {
-      emitReadyMarker: shouldUseShellReadyStartupDelivery({
-        command,
-        startupCommandDelivery:
-          params.startupCommandDelivery === 'shell-ready' ? 'shell-ready' : undefined
-      })
+      emitReadyMarker:
+        shouldProviderDeliverCommand &&
+        shouldUseShellReadyStartupDelivery({
+          command,
+          startupCommandDelivery:
+            params.startupCommandDelivery === 'shell-ready' ? 'shell-ready' : undefined
+        })
     })
 
     // Why: SSH exec channels give the relay a minimal environment without
@@ -533,8 +542,6 @@ export class PtyHandler {
     // and is bounded by the renderer; the relay treats it as opaque.
     const tabId = typeof env?.ORCA_TAB_ID === 'string' ? env.ORCA_TAB_ID : undefined
     const worktreeId = typeof env?.ORCA_WORKTREE_ID === 'string' ? env.ORCA_WORKTREE_ID : undefined
-    const commandDelivery = params.commandDelivery === 'provider' ? 'provider' : 'renderer'
-    const shouldProviderDeliverCommand = commandDelivery === 'provider' && command !== undefined
     const managed: ManagedPty = {
       id,
       pty: term,
