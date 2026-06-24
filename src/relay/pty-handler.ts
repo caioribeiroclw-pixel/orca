@@ -13,6 +13,12 @@ import {
 import { getRelayShellLaunchConfig } from './pty-shell-launch'
 import { DEFAULT_SSH_RELAY_GRACE_PERIOD_SECONDS } from '../shared/ssh-types'
 import { shouldUseShellReadyStartupDelivery } from '../shared/codex-startup-delivery'
+import {
+  createShellReadyScanState,
+  drainShellReadyHeldBytes,
+  scanForShellReady,
+  type ShellReadyScanState
+} from '../main/shell-ready-marker-scanner'
 
 // Why: node-pty is a native addon that may not be installed on the remote.
 // Dynamic import keeps the require() lazy so loadPty() returns null gracefully
@@ -53,10 +59,19 @@ type ManagedPty = {
   paneKey?: string
   tabId?: string
   worktreeId?: string
+  startupCommand?: ManagedStartupCommand
 }
 
 type PendingPtyOutput = {
   data: string
+}
+
+type ManagedStartupCommand = {
+  command: string
+  delivered: boolean
+  waitForShellReady: boolean
+  scanState: ShellReadyScanState | null
+  timer: ReturnType<typeof setTimeout> | null
 }
 
 function disposeManagedPty(managed: ManagedPty): void {
@@ -98,6 +113,8 @@ const INTERACTIVE_OUTPUT_WINDOW_MS = 100
 const INTERACTIVE_OUTPUT_MAX_CHARS = 1024
 const INTERACTIVE_REDRAW_MAX_CHARS = PTY_OUTPUT_FLUSH_CHUNK_CHARS
 const INTERACTIVE_OUTPUT_BUDGET_CHARS = 32 * 1024
+const STARTUP_COMMAND_WRITE_DELAY_MS = 50
+const STARTUP_COMMAND_SHELL_READY_FALLBACK_MS = 1500
 const ALLOWED_SIGNALS = new Set([
   'SIGINT',
   'SIGTERM',
@@ -222,10 +239,62 @@ export class PtyHandler {
     return { ...baseEnv, ...augmented }
   }
 
+  private clearStartupCommandTimer(managed: ManagedPty): void {
+    if (managed.startupCommand?.timer) {
+      clearTimeout(managed.startupCommand.timer)
+      managed.startupCommand.timer = null
+    }
+  }
+
+  private releaseStartupCommand(managed: ManagedPty): void {
+    this.clearStartupCommandTimer(managed)
+    managed.startupCommand = undefined
+  }
+
+  private scheduleStartupCommandDelivery(managed: ManagedPty, delayMs: number): void {
+    const startup = managed.startupCommand
+    if (!startup || startup.delivered || managed.disposed) {
+      return
+    }
+    this.clearStartupCommandTimer(managed)
+    startup.timer = setTimeout(() => {
+      startup.timer = null
+      this.deliverStartupCommand(managed)
+    }, delayMs)
+  }
+
+  private deliverStartupCommand(managed: ManagedPty): void {
+    const startup = managed.startupCommand
+    if (!startup || startup.delivered || managed.disposed) {
+      return
+    }
+    startup.delivered = true
+    this.clearStartupCommandTimer(managed)
+    if (startup.scanState) {
+      const heldBytes = drainShellReadyHeldBytes(startup.scanState)
+      if (heldBytes) {
+        this.enqueuePtyOutput(managed.id, heldBytes)
+      }
+    }
+    const submit = process.platform === 'win32' ? '\r' : '\n'
+    const endsWithSubmit = startup.command.endsWith('\r') || startup.command.endsWith('\n')
+    const payload = endsWithSubmit ? startup.command : `${startup.command}${submit}`
+    managed.startupCommand = undefined
+    managed.pty.write(payload)
+  }
+
   /** Wire onData/onExit listeners for a managed PTY and store it. */
   private wireAndStore(managed: ManagedPty): void {
     this.ptys.set(managed.id, managed)
     managed.pty.onData((data: string) => {
+      const startup = managed.startupCommand
+      if (startup?.waitForShellReady && startup.scanState && !startup.delivered) {
+        const scanned = scanForShellReady(startup.scanState, data)
+        data = scanned.output
+        if (scanned.matched) {
+          this.scheduleStartupCommandDelivery(managed, STARTUP_COMMAND_WRITE_DELAY_MS)
+        }
+      }
       managed.buffered += data
       if (managed.buffered.length > REPLAY_BUFFER_MAX) {
         managed.buffered = managed.buffered.slice(-REPLAY_BUFFER_MAX)
@@ -253,6 +322,7 @@ export class PtyHandler {
         clearTimeout(managed.killTimer)
         managed.killTimer = undefined
       }
+      this.clearStartupCommandTimer(managed)
       this.flushPtyOutput(managed.id)
       this.dispatcher.notify('pty.exit', { id: managed.id, code: exitCode })
       this.notifyExitListener(managed)
@@ -428,9 +498,9 @@ export class PtyHandler {
     // dirs) override renderer-supplied env so live remote paths and hook coords
     // win over local userData paths. The context lets overlay augmenters derive
     // per-PTY OpenCode/Pi directories from the stable paneKey when present.
-    // `command` is forwarded by ssh-pty-provider.ts only as a hint for
-    // overlay resolution — the relay still launches a login shell and the
-    // command is typed in via pty.data writes.
+    // `command` is usually forwarded by ssh-pty-provider.ts only as a hint
+    // for overlay resolution; runtime-owned PTYs opt into relay delivery
+    // because no renderer TerminalPane exists to type the command.
     const paneKey = typeof env?.ORCA_PANE_KEY === 'string' ? env.ORCA_PANE_KEY : undefined
     const command = typeof params.command === 'string' ? params.command : undefined
     const spawnEnv = this.buildSpawnEnv(env, { id, paneKey, shell, command })
@@ -463,6 +533,8 @@ export class PtyHandler {
     // and is bounded by the renderer; the relay treats it as opaque.
     const tabId = typeof env?.ORCA_TAB_ID === 'string' ? env.ORCA_TAB_ID : undefined
     const worktreeId = typeof env?.ORCA_WORKTREE_ID === 'string' ? env.ORCA_WORKTREE_ID : undefined
+    const commandDelivery = params.commandDelivery === 'provider' ? 'provider' : 'renderer'
+    const shouldProviderDeliverCommand = commandDelivery === 'provider' && command !== undefined
     const managed: ManagedPty = {
       id,
       pty: term,
@@ -470,13 +542,28 @@ export class PtyHandler {
       buffered: '',
       paneKey,
       tabId,
-      worktreeId
+      worktreeId,
+      ...(shouldProviderDeliverCommand
+        ? {
+            startupCommand: {
+              command,
+              delivered: false,
+              waitForShellReady: shellLaunch.env.ORCA_SHELL_READY_MARKER === '1',
+              scanState:
+                shellLaunch.env.ORCA_SHELL_READY_MARKER === '1'
+                  ? createShellReadyScanState()
+                  : null,
+              timer: null
+            }
+          }
+        : {})
     }
     this.wireAndStore(managed)
     if (context?.isStale()) {
       // Why: if the client reconnected while pty.spawn was in flight, the
       // response is discarded and no renderer can own this PTY. Shut it down
       // immediately so it does not linger as an unreachable remote shell.
+      this.releaseStartupCommand(managed)
       term.kill('SIGTERM')
       managed.killTimer = setTimeout(() => {
         const still = this.ptys.get(id)
@@ -491,6 +578,13 @@ export class PtyHandler {
           this.ptys.delete(id)
         }
       }, 5000)
+    } else if (managed.startupCommand) {
+      this.scheduleStartupCommandDelivery(
+        managed,
+        managed.startupCommand.waitForShellReady
+          ? STARTUP_COMMAND_SHELL_READY_FALLBACK_MS
+          : STARTUP_COMMAND_WRITE_DELAY_MS
+      )
     }
     return { id }
   }
@@ -562,6 +656,7 @@ export class PtyHandler {
     }
 
     if (immediate) {
+      this.releaseStartupCommand(managed)
       this.flushPtyOutput(id)
       managed.pty.kill('SIGKILL')
       // Why: SIGKILL has already reaped the child; release the ptmx fd on the
@@ -581,6 +676,7 @@ export class PtyHandler {
       this.ptys.delete(id)
       this.clearPtyFlowState(id)
     } else {
+      this.releaseStartupCommand(managed)
       managed.pty.kill('SIGTERM')
 
       // Why: Some processes ignore SIGTERM (e.g. a hung child, a custom signal
@@ -821,6 +917,7 @@ export class PtyHandler {
         clearTimeout(managed.killTimer)
         managed.killTimer = undefined
       }
+      this.clearStartupCommandTimer(managed)
       // Why: SIGKILL (not SIGTERM) before destroy. The relay process is
       // exiting; any SIGTERM-ignoring remote shell (editor with unsaved
       // buffers, a hung child with a bad handler, a process in
@@ -841,6 +938,16 @@ export class PtyHandler {
 
   get activePtyCount(): number {
     return this.ptys.size
+  }
+
+  get retainedStartupCommandCount(): number {
+    let count = 0
+    for (const managed of this.ptys.values()) {
+      if (managed.startupCommand) {
+        count += 1
+      }
+    }
+    return count
   }
 
   get graceTimerActive(): boolean {

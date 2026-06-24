@@ -214,6 +214,34 @@ describe('ensureWorktreeHasInitialTerminal', () => {
     expect(store.queueTabIssueCommandSplit).not.toHaveBeenCalled()
   })
 
+  it('queues returned setup on an existing terminal tab when startup was already adopted', () => {
+    let createdIndex = 1
+    const createTab = vi.fn(() => ({ id: `tab-${++createdIndex}` }))
+    const store = createMockStore({
+      tabsByWorktree: { 'wt-1': [{ id: 'tab-1' }] },
+      createTab,
+      reconcileWorktreeTabModel: vi.fn(() => ({ renderableTabCount: 1 }))
+    })
+
+    const result = ensureWorktreeHasInitialTerminal(store, 'wt-1', undefined, {
+      runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+      command: 'bash -lc wrapped-setup',
+      envVars: { ORCA_ROOT_PATH: '/tmp/repo' }
+    })
+
+    expect(result).toBe('tab-1')
+    expect(createTab).toHaveBeenCalledTimes(1)
+    expect(store.setActiveTab).toHaveBeenCalledWith('tab-1')
+    expect(store.setTabCustomTitle).toHaveBeenCalledWith('tab-2', 'Setup', {
+      recordInteraction: false
+    })
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith('tab-2', {
+      command: 'bash -lc wrapped-setup',
+      env: { ORCA_ROOT_PATH: '/tmp/repo' }
+    })
+    expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
+  })
+
   it('queues a startup command when agent launch is provided', () => {
     const store = createMockStore()
 
@@ -234,6 +262,81 @@ describe('ensureWorktreeHasInitialTerminal', () => {
     })
     expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
     expect(store.queueTabIssueCommandSplit).not.toHaveBeenCalled()
+  })
+
+  it('gates startup behind setup completion when both are provided in new-tab mode', () => {
+    setSetupScriptLaunchMode('new-tab')
+    let createdIndex = 0
+    const createTab = vi.fn(() => ({ id: `tab-${++createdIndex}` }))
+    const store = createMockStore({ createTab })
+
+    ensureWorktreeHasInitialTerminal(
+      store,
+      'wt-1',
+      { command: 'claude' },
+      {
+        runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+        envVars: { ORCA_ROOT_PATH: '/tmp/repo' }
+      }
+    )
+
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-1',
+      expect.objectContaining({
+        command: expect.stringContaining('Timed out waiting for setup before starting agent.')
+      })
+    )
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-1',
+      expect.objectContaining({
+        command: expect.stringContaining('exec claude')
+      })
+    )
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-2',
+      expect.objectContaining({
+        command: expect.stringContaining('printf')
+      })
+    )
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-2',
+      expect.objectContaining({
+        command: expect.stringContaining('bash /tmp/repo/.git/orca/setup-runner.sh')
+      })
+    )
+    expect(store.queueTabSetupSplit).not.toHaveBeenCalled()
+  })
+
+  it('gates startup behind setup completion when setup is a split', () => {
+    setSetupScriptLaunchMode('split-vertical')
+    const store = createMockStore()
+
+    ensureWorktreeHasInitialTerminal(
+      store,
+      'wt-1',
+      { command: 'claude' },
+      {
+        runnerScriptPath: '/tmp/repo/.git/orca/setup-runner.sh',
+        envVars: { ORCA_ROOT_PATH: '/tmp/repo' }
+      }
+    )
+
+    expect(store.queueTabStartupCommand).toHaveBeenCalledWith(
+      'tab-1',
+      expect.objectContaining({
+        command: expect.stringContaining('exec claude')
+      })
+    )
+    expect(store.queueTabSetupSplit).toHaveBeenCalledWith('tab-1', {
+      command: expect.stringContaining('bash /tmp/repo/.git/orca/setup-runner.sh'),
+      env: { ORCA_ROOT_PATH: '/tmp/repo' },
+      direction: 'vertical'
+    })
+    expect(store.queueTabSetupSplit).toHaveBeenCalledWith('tab-1', {
+      command: expect.stringContaining('printf'),
+      env: { ORCA_ROOT_PATH: '/tmp/repo' },
+      direction: 'vertical'
+    })
   })
 
   it('forwards telemetry on the queued startup so main can fire agent_started', () => {

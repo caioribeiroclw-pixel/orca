@@ -131,13 +131,11 @@ export class SshPtyProvider implements IPtyProvider {
       rows: opts.rows,
       cwd: opts.cwd,
       env: this.withRemoteCliBridgeEnv(opts.env),
-      // Why: the relay's plugin-overlay env augmenter needs to know which
-      // Pi-compatible agent is being launched (`pi` vs `omp`) so it mirrors
-      // the right `~/.<kind>/agent` source dir on the remote disk. The
-      // relay does not execute `command` itself — the user types it into
-      // the shell — but receiving it as a hint lets overlay resolution be
-      // per-launch instead of always-Pi.
+      // Why: most SSH terminal panes renderer-deliver commands after mount,
+      // while runtime-owned background PTYs have no renderer writer. Thread
+      // commandDelivery so the relay only submits commands for that latter path.
       ...(opts.command ? { command: opts.command } : {}),
+      ...(opts.commandDelivery ? { commandDelivery: opts.commandDelivery } : {}),
       ...(opts.startupCommandDelivery
         ? { startupCommandDelivery: opts.startupCommandDelivery }
         : {})

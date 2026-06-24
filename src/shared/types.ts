@@ -1930,6 +1930,7 @@ export type RepoHookSettings = {
 export type WorktreeSetupLaunch = {
   runnerScriptPath: string
   envVars: Record<string, string>
+  command?: string
 }
 
 export type WorktreeStartupLaunch = {
