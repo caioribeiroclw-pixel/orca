@@ -76,6 +76,9 @@ const RepoUpdate = RepoSelector.extend({
     forkSyncMode: z.enum(['ask', 'safe-auto', 'off']).optional(),
     externalWorktreeVisibility: z.enum(['hide', 'show']).optional(),
     externalWorktreeVisibilityPromptDismissedAt: z.number().finite().optional(),
+    externalWorktreeInboxBaselinePaths: z.array(z.string()).optional(),
+    importedExternalWorktreePaths: z.array(z.string()).optional(),
+    externalWorktreeDiscoverySuppressedAt: z.number().finite().nullable().optional(),
     projectGroupId: OptionalString.nullable().optional(),
     projectGroupOrder: OptionalFiniteNumber,
     sourceControlAi: RepoSourceControlAiOverrides

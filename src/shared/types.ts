@@ -261,6 +261,12 @@ export type Repo = {
   externalWorktreeVisibilityLegacy?: boolean
   /** One-shot guard for the optional existing-user visibility prompt. */
   externalWorktreeVisibilityPromptDismissedAt?: number
+  /** Hidden external worktree paths acknowledged by Keep hidden on the inbox. */
+  externalWorktreeInboxBaselinePaths?: string[]
+  /** External worktree paths explicitly imported while global visibility stays hide. */
+  importedExternalWorktreePaths?: string[]
+  /** User permanently opted out of the new-external-worktree inbox for this repo. */
+  externalWorktreeDiscoverySuppressedAt?: number
   /** Paths (relative to the primary checkout) that should be symlinked into
    *  newly created worktrees of this repo. Consumed only when the global
    *  `experimentalWorktreeSymlinks` flag is on — the per-repo list is the

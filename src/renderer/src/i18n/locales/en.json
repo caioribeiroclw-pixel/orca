@@ -4307,6 +4307,25 @@
         },
         "WorktreeCardStatusSlot": {
           "branchIdentity": "Branch"
+        },
+        "NewExternalWorktreesInboxLine": {
+          "9f2d4c8b17": "Hide external worktrees permanently for {{value0}}",
+          "2a8f1d6c40": "{{value0}} new externally-created worktrees for {{value1}}",
+          "7c4e9b2a81": "New externally-created worktrees",
+          "5e1b8d3f62": "Hide external worktrees permanently",
+          "4d7a1c9e53": "These worktrees were created outside of Orca.",
+          "8b3f2e1d74": "Import",
+          "1c9e7a4b28": "Keep hidden",
+          "6f2d8c1e95": "Import all",
+          "c3e8a1f4b2": "Don't show again"
+        },
+        "SuppressExternalWorktreeInboxDialog": {
+          "a4c2d8f1b0": "Hide external worktrees?",
+          "6e91b3c4d2": "External worktrees will not be shown in the sidebar or this list anymore for {{value0}}, including ones created later.",
+          "1f8a5d9e73": "You can turn this back on from the",
+          "8c0b2e7a41": "project menu → Non-Orca worktrees",
+          "5d1c9f0a82": "Cancel",
+          "3b7e4a1c96": "Hide external worktrees"
         }
       },
       "shared": {

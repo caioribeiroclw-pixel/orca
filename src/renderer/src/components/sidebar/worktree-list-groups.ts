@@ -81,6 +81,18 @@ export type ImportedWorktreesCardRow = {
   placement: 'repo-group' | 'pinned-fallback'
 }
 
+export type NewExternalWorktreesInboxCandidate = {
+  repo: Repo
+  inboxWorktrees: DetectedWorktree[]
+}
+
+export type NewExternalWorktreesInboxRow = {
+  type: 'new-external-worktrees-inbox'
+  key: string
+  repo: Repo
+  inboxWorktrees: DetectedWorktree[]
+}
+
 export type PendingCreationRow = {
   type: 'pending-creation'
   key: string
@@ -107,6 +119,7 @@ export type Row =
   | GroupHeaderRow
   | WorktreeRow
   | ImportedWorktreesCardRow
+  | NewExternalWorktreesInboxRow
   | PendingCreationRow
   | FolderWorkspaceRow
 
@@ -465,6 +478,17 @@ function buildImportedWorktreesCardRow(
   }
 }
 
+function buildNewExternalWorktreesInboxRow(
+  candidate: NewExternalWorktreesInboxCandidate
+): NewExternalWorktreesInboxRow {
+  return {
+    type: 'new-external-worktrees-inbox',
+    key: `new-external-worktrees-inbox:${candidate.repo.id}`,
+    repo: candidate.repo,
+    inboxWorktrees: candidate.inboxWorktrees
+  }
+}
+
 function buildWorktreeRow(
   worktree: Worktree,
   repoMap: Map<string, Repo>,
@@ -795,6 +819,10 @@ export function buildRows(
   projectGroups: readonly ProjectGroup[] = [],
   placeholderRepoIds: ReadonlySet<string> = new Set(),
   importedWorktreesByRepo: ReadonlyMap<string, ImportedWorktreesCardCandidate> = new Map(),
+  newExternalWorktreesInboxByRepo: ReadonlyMap<
+    string,
+    NewExternalWorktreesInboxCandidate
+  > = new Map(),
   pendingCreations: readonly PendingCreationRef[] = [],
   projectGrouping?: ProjectGroupingModel,
   folderWorkspaces: readonly FolderWorkspace[] = [],
@@ -907,6 +935,22 @@ export function buildRows(
   }
   if (groupBy === 'repo') {
     for (const [repoId, candidate] of importedWorktreesByRepo) {
+      const grouping = getProjectGroupingForRepo(repoId, repoMap, projectIndex)
+      const key = grouping.key
+      if (!grouped.has(key) && !visiblePinnedRepoIds.has(repoId)) {
+        grouped.set(key, {
+          label: grouping.label,
+          items: [],
+          repo: grouping.repo ?? candidate.repo,
+          repoIds: new Set([repoId])
+        })
+      } else if (grouped.has(key)) {
+        addRepoIdToGroup(grouped.get(key)!, repoId)
+      }
+    }
+  }
+  if (groupBy === 'repo') {
+    for (const [repoId, candidate] of newExternalWorktreesInboxByRepo) {
       const grouping = getProjectGroupingForRepo(repoId, repoMap, projectIndex)
       const key = grouping.key
       if (!grouped.has(key) && !visiblePinnedRepoIds.has(repoId)) {
@@ -1058,13 +1102,40 @@ export function buildRows(
           groupBy === 'repo'
             ? getMixedHostContextLabels(group, repoMap, projectIndex, hostLabelById)
             : undefined
-        appendWorktreeRows(result, items, repoMap, lineageById, worktreeMap, {
-          nestLineage,
-          collapsedGroups,
-          groupDepth: projectGroupDepth,
-          sectionKey: key,
-          hostContextLabelByRepoId
-        })
+        if (groupBy === 'repo') {
+          const repoIdsInGroup =
+            group.repoIds.size > 0
+              ? [...group.repoIds]
+              : repo
+                ? [repo.id]
+                : key.startsWith('repo:')
+                  ? [key.slice('repo:'.length)]
+                  : []
+          for (const repoId of repoIdsInGroup) {
+            const repoItems = orderMainWorktreeFirst(
+              items.filter((worktree) => worktree.repoId === repoId)
+            )
+            appendWorktreeRows(result, repoItems, repoMap, lineageById, worktreeMap, {
+              nestLineage,
+              collapsedGroups,
+              groupDepth: projectGroupDepth,
+              sectionKey: key,
+              hostContextLabelByRepoId
+            })
+            const inboxCandidate = newExternalWorktreesInboxByRepo.get(repoId)
+            if (inboxCandidate) {
+              result.push(buildNewExternalWorktreesInboxRow(inboxCandidate))
+            }
+          }
+        } else {
+          appendWorktreeRows(result, items, repoMap, lineageById, worktreeMap, {
+            nestLineage,
+            collapsedGroups,
+            groupDepth: projectGroupDepth,
+            sectionKey: key,
+            hostContextLabelByRepoId
+          })
+        }
       }
     }
   }

@@ -3729,11 +3729,16 @@ export class Store {
         | 'forkSyncMode'
         | 'externalWorktreeVisibility'
         | 'externalWorktreeVisibilityPromptDismissedAt'
+        | 'externalWorktreeInboxBaselinePaths'
+        | 'importedExternalWorktreePaths'
         | 'projectGroupId'
         | 'projectGroupOrder'
         | 'projectHostSetupMethod'
       >
-    > & { sourceControlAi?: Repo['sourceControlAi'] | null }
+    > & {
+      sourceControlAi?: Repo['sourceControlAi'] | null
+      externalWorktreeDiscoverySuppressedAt?: Repo['externalWorktreeDiscoverySuppressedAt'] | null
+    }
   ): Repo | null {
     const repo = this.state.repos.find((r) => r.id === id)
     if (!repo) {
@@ -3782,6 +3787,14 @@ export class Store {
       // Why: old persisted repos have no explicit marker. Stamp it the first
       // time visibility changes so later hide/show choices keep legacy safety.
       repo.externalWorktreeVisibilityLegacy = externalWorktreeVisibilityLegacy
+    }
+    if (
+      'externalWorktreeDiscoverySuppressedAt' in sanitizedUpdates &&
+      (sanitizedUpdates.externalWorktreeDiscoverySuppressedAt === undefined ||
+        sanitizedUpdates.externalWorktreeDiscoverySuppressedAt === null)
+    ) {
+      delete repo.externalWorktreeDiscoverySuppressedAt
+      delete sanitizedUpdates.externalWorktreeDiscoverySuppressedAt
     }
     if (
       'sourceControlAi' in sanitizedUpdates &&
