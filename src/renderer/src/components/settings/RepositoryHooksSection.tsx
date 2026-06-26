@@ -6,6 +6,7 @@ import type {
   OrcaHooks,
   Repo,
   RepoHookSettings,
+  SetupAgentStartupPolicy,
   SetupRunPolicy
 } from '../../../../shared/types'
 import { AlertTriangle, ChevronRight, Plus } from 'lucide-react'
@@ -13,6 +14,7 @@ import { toast } from 'sonner'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
+import { Checkbox } from '../ui/checkbox'
 import { SearchableSetting } from './SearchableSetting'
 import { useAppStore } from '@/store'
 import { readRuntimeIssueCommand, writeRuntimeIssueCommand } from '@/runtime/runtime-hooks-client'
@@ -39,7 +41,7 @@ type PolicyOption<P> = { policy: P; label: string; description: string }
 const LOCAL_HOOK_NAMES = ['setup', 'archive'] as const
 type LocalHookName = (typeof LOCAL_HOOK_NAMES)[number]
 type HookSettingsPolicyDraft = Partial<
-  Pick<RepoHookSettings, 'setupRunPolicy' | 'commandSourcePolicy'>
+  Pick<RepoHookSettings, 'setupRunPolicy' | 'setupAgentStartupPolicy' | 'commandSourcePolicy'>
 >
 
 // Why: this is a literal issue-command template token, not app data for i18next to fill.
@@ -75,6 +77,7 @@ function areHookSettingsDraftsEqual(a: RepoHookSettings, b: RepoHookSettings): b
   return (
     a.mode === b.mode &&
     a.setupRunPolicy === b.setupRunPolicy &&
+    a.setupAgentStartupPolicy === b.setupAgentStartupPolicy &&
     a.commandSourcePolicy === b.commandSourcePolicy &&
     a.scripts.setup === b.scripts.setup &&
     a.scripts.archive === b.scripts.archive
@@ -770,6 +773,8 @@ export function RepositoryHooksSection({
 
   const selectedSetupRunPolicy: SetupRunPolicy =
     hookSettingsDraft.setupRunPolicy ?? 'run-by-default'
+  const selectedSetupAgentStartupPolicy: SetupAgentStartupPolicy =
+    hookSettingsDraft.setupAgentStartupPolicy ?? 'start-immediately'
   const setupRunPolicyOptions = getSetupRunPolicyOptions()
   const commandSourcePolicyOptions = getCommandSourcePolicyOptions()
   const localHookFields = getLocalHookFields()
@@ -1064,6 +1069,31 @@ export function RepositoryHooksSection({
             onSelect={(policy) => updateHookSettingsPolicyDraft({ setupRunPolicy: policy })}
           />
         </div>
+        <label className="mt-3 flex gap-3 rounded-2xl border border-border/50 bg-background/80 p-4 shadow-sm">
+          <Checkbox
+            className="mt-0.5"
+            checked={selectedSetupAgentStartupPolicy === 'wait-for-setup'}
+            onCheckedChange={(checked) =>
+              updateHookSettingsPolicyDraft({
+                setupAgentStartupPolicy: checked === true ? 'wait-for-setup' : 'start-immediately'
+              })
+            }
+          />
+          <span className="min-w-0 space-y-1">
+            <span className="block text-sm font-semibold">
+              {translate(
+                'auto.components.settings.RepositoryHooksSection.waitForSetupBeforeAgent',
+                'Wait for setup before starting agent'
+              )}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {translate(
+                'auto.components.settings.RepositoryHooksSection.waitForSetupBeforeAgentHelp',
+                'Leave unchecked for long-running setup commands such as dev servers; agents start immediately while setup runs.'
+              )}
+            </span>
+          </span>
+        </label>
       </SearchableSetting>
 
       <SearchableSetting

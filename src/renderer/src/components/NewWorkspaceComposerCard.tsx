@@ -15,6 +15,7 @@ import {
   Settings2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type RepoCombobox from '@/components/repo/RepoCombobox'
 import AgentCombobox from '@/components/agent/AgentCombobox'
@@ -35,6 +36,7 @@ import type {
   GitHubWorkItem,
   GitLabWorkItem,
   LinearIssue,
+  SetupAgentStartupPolicy,
   SparsePreset,
   TuiAgent
 } from '../../../shared/types'
@@ -116,6 +118,8 @@ type NewWorkspaceComposerCardProps = {
   requiresExplicitSetupChoice: boolean
   setupDecision: 'run' | 'skip' | null
   onSetupDecisionChange: (value: 'run' | 'skip') => void
+  setupAgentStartupPolicy: SetupAgentStartupPolicy
+  onSetupAgentStartupPolicyChange: (value: SetupAgentStartupPolicy) => void
   shouldWaitForSetupCheck: boolean
   resolvedSetupDecision: 'run' | 'skip' | null
   createError: WorkspaceCreateErrorDisplay | null
@@ -354,6 +358,8 @@ export default function NewWorkspaceComposerCard({
   requiresExplicitSetupChoice,
   setupDecision,
   onSetupDecisionChange,
+  setupAgentStartupPolicy,
+  onSetupAgentStartupPolicyChange,
   shouldWaitForSetupCheck,
   resolvedSetupDecision,
   createError,
@@ -421,6 +427,10 @@ export default function NewWorkspaceComposerCard({
         ? 'Run commands now'
         : 'Run setup now'
   const setupSkipButtonLabel = setupConfig?.kind === 'setup' ? 'Skip for now' : 'Skip commands'
+  // Why: defaultTabs launch commands can be long-running too, but they are not
+  // the setup command this setting gates agent startup on.
+  const showSetupAgentStartupPolicy =
+    setupControlsEnabled && setupConfig !== null && setupConfig.kind !== 'default-tabs'
 
   const handleSetDefaultAgent = React.useCallback(
     (next: TuiAgent | 'blank' | null) => {
@@ -1003,6 +1013,34 @@ export default function NewWorkspaceComposerCard({
                         </div>
                       ) : null}
                     </div>
+                  ) : null}
+
+                  {showSetupAgentStartupPolicy ? (
+                    <label className="flex gap-2 rounded-md border border-border/60 bg-muted/25 p-3">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={setupAgentStartupPolicy === 'wait-for-setup'}
+                        onCheckedChange={(checked) =>
+                          onSetupAgentStartupPolicyChange(
+                            checked === true ? 'wait-for-setup' : 'start-immediately'
+                          )
+                        }
+                      />
+                      <span className="min-w-0 space-y-1">
+                        <span className="block text-xs font-medium text-foreground">
+                          {translate(
+                            'auto.components.NewWorkspaceComposerCard.waitForSetupBeforeAgent',
+                            'Wait for setup before starting agent'
+                          )}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {translate(
+                            'auto.components.NewWorkspaceComposerCard.waitForSetupBeforeAgentHelp',
+                            'Repository setting. Leave off for long-running setup commands such as dev servers.'
+                          )}
+                        </span>
+                      </span>
+                    </label>
                   ) : null}
                 </div>
               ) : null}

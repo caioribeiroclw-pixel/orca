@@ -38,7 +38,9 @@ export function createSequencedSetupAgentCommands(args: {
 }): SequencedSetupAgentCommands {
   const nonce = args.nonce ?? createSetupAgentSequenceNonce()
   const resolution = resolveSetupRunnerCommand(args.runnerScriptPath, args.platform)
-  const markerPath = `${resolution.runnerScriptPathForShell}.done`
+  // Why: overlapping gated launches of the same setup runner must not race on
+  // a shared completion marker.
+  const markerPath = `${resolution.runnerScriptPathForShell}.${nonce}.done`
   const waitTimeoutSeconds = args.waitTimeoutSeconds ?? DEFAULT_WAIT_TIMEOUT_SECONDS
 
   if (resolution.shell === 'windows') {
@@ -58,7 +60,10 @@ export function createSequencedSetupAgentCommands(args: {
       markerPath,
       nonce,
       waitTimeoutSeconds
-    )
+    ),
+    startupEnv: {
+      [SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV]: args.startupCommand
+    }
   }
 }
 
@@ -99,7 +104,7 @@ function buildPosixStartupCommand(
     `if [ -f ${marker} ]; then`,
     `IFS=: read -r seen status < ${marker} || true;`,
     `if [ "$seen" = ${nonceValue} ]; then`,
-    `if [ "$status" = "0" ]; then if [ -n "\${${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}:-}" ]; then eval "exec \$${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}"; else ${startupSuccessCommand}; fi; fi;`,
+    `if [ "$status" = "0" ]; then if [ -n "\${${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}:-}" ]; then eval "\$${SETUP_AGENT_SEQUENCE_STARTUP_COMMAND_ENV}"; exit "$?"; else ${startupSuccessCommand}; fi; fi;`,
     'echo "Setup failed; skipping agent startup." >&2;',
     'exit "${status:-1}";',
     'fi;',
