@@ -4,6 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import WorktreeCreationPanel from './WorktreeCreationPanel'
+import type { PendingWorktreeCreation } from '@/lib/pending-worktree-creation'
 
 const mocks = vi.hoisted(() => ({
   state: {
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
         creationId: 'create-1',
         phase: 'creating',
         status: 'creating',
+        startedAt: Date.now(),
         indeterminate: false,
         loaderVisible: true,
         request: {
@@ -27,7 +29,7 @@ const mocks = vi.hoisted(() => ({
           quickTelemetry: null
         }
       }
-    }
+    } as Record<string, PendingWorktreeCreation>
   }
 }))
 
@@ -62,6 +64,26 @@ async function renderPanel(reserveCollapsedSidebarHeaderSpace: boolean): Promise
 describe('WorktreeCreationPanel', () => {
   beforeEach(() => {
     globalThis.IS_REACT_ACT_ENVIRONMENT = true
+    mocks.state.pendingWorktreeCreations['create-1'] = {
+      creationId: 'create-1',
+      phase: 'creating',
+      status: 'creating',
+      startedAt: Date.now(),
+      indeterminate: false,
+      loaderVisible: true,
+      request: {
+        repoId: 'repo-1',
+        name: 'new-workspace',
+        displayName: 'New workspace',
+        setupDecision: 'skip',
+        agent: null,
+        pendingFirstAgentMessageRename: false,
+        note: '',
+        startupPlan: null,
+        quickPrompt: '',
+        quickTelemetry: null
+      }
+    }
   })
 
   afterEach(() => {
@@ -99,5 +121,20 @@ describe('WorktreeCreationPanel', () => {
     )
 
     expect(title?.closest('div')?.previousElementSibling).toBeNull()
+  })
+
+  it('shows provisioning logs while a VM recipe is running', async () => {
+    mocks.state.pendingWorktreeCreations['create-1'] = {
+      ...mocks.state.pendingWorktreeCreations['create-1'],
+      phase: 'provisioning-vm',
+      provisioningLog: 'creating sandbox\nstarting orca serve\n'
+    }
+
+    const container = await renderPanel(false)
+
+    expect(container.textContent).toContain('Provisioning VM…')
+    expect(container.querySelector('pre')?.textContent).toBe(
+      'creating sandbox\nstarting orca serve\n'
+    )
   })
 })

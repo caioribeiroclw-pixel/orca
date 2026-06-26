@@ -58,6 +58,7 @@ import {
   getRuntimeEnvironmentsSearchEntry,
   getWebRuntimeEnvironmentsSearchEntry
 } from '@/components/settings/runtime-environments-search'
+import { getEphemeralVmsSearchEntry } from '@/components/settings/ephemeral-vms-search'
 import { getSshPaneSearchEntries } from '@/components/settings/ssh-search'
 import { getMobileSettingsPaneSearchEntries } from '@/components/settings/mobile-settings-search'
 import { getMobileEmulatorSearchEntries } from '@/components/settings/mobile-emulator-search'
@@ -397,6 +398,18 @@ export function buildSettingsNavigationMetadata({
         : 'Pair remote Orca runtimes for persistent sessions, richer remote state, and web or mobile handoff.',
       icon: Server,
       searchEntries: [runtimeEnvironmentsSearchEntry],
+      group: 'remote',
+      badge: translate('auto.hooks.useSettingsNavigationMetadata.40d80bad8a', 'Beta')
+    },
+    {
+      id: 'ephemeral-vms',
+      title: translate('auto.hooks.useSettingsNavigationMetadata.ephemeralVms', 'Ephemeral VMs'),
+      description: translate(
+        'auto.hooks.useSettingsNavigationMetadata.ephemeralVmsDescription',
+        'Use repo-owned recipes to create one temporary cloud runtime per workspace.'
+      ),
+      icon: Server,
+      searchEntries: [getEphemeralVmsSearchEntry()],
       group: 'remote',
       badge: translate('auto.hooks.useSettingsNavigationMetadata.40d80bad8a', 'Beta')
     },

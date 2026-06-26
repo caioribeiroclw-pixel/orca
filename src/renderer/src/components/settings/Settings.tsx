@@ -46,6 +46,7 @@ import { ComputerUsePane } from './ComputerUsePane'
 import { MobileSettingsPane } from './MobileSettingsPane'
 import { MobileEmulatorSettingsPane } from './MobileEmulatorSettingsPane'
 import { RuntimeEnvironmentsPane } from './RuntimeEnvironmentsPane'
+import { EphemeralVmsPane } from './EphemeralVmsPane'
 import { PrivacyPane } from './PrivacyPane'
 import { AdvancedPane } from './AdvancedPane'
 import { SettingsSidebar } from './SettingsSidebar'
@@ -75,6 +76,7 @@ import type {
 } from '@/lib/settings-navigation-types'
 import {
   COMPUTER_USE_SKILL_NAME,
+  EPHEMERAL_VMS_SKILL_NAME,
   ORCHESTRATION_SKILL_NAME
 } from '@/lib/agent-feature-install-commands'
 import {
@@ -290,6 +292,11 @@ function Settings(): React.JSX.Element {
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
   const computerUseSkill = useInstalledAgentSkill(COMPUTER_USE_SKILL_NAME, {
+    enabled: showDesktopOnlySettings,
+    discoveryTarget: activeSkillRuntime.discoveryTarget,
+    sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
+  })
+  const ephemeralVmsSkill = useInstalledAgentSkill(EPHEMERAL_VMS_SKILL_NAME, {
     enabled: showDesktopOnlySettings,
     discoveryTarget: activeSkillRuntime.discoveryTarget,
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
@@ -607,6 +614,8 @@ function Settings(): React.JSX.Element {
     orchestrationSkill
   const { installed: computerUseSkillInstalled, loading: computerUseSkillLoading } =
     computerUseSkill
+  const { installed: ephemeralVmsSkillInstalled, loading: ephemeralVmsSkillLoading } =
+    ephemeralVmsSkill
   const capabilityInstallStatusBySectionId = useMemo(() => {
     const next = new Map<string, SettingsNavInstallStatus>([
       [
@@ -618,6 +627,13 @@ function Settings(): React.JSX.Element {
       ]
     ])
     if (showDesktopOnlySettings) {
+      next.set(
+        'ephemeral-vms',
+        getSkillNavInstallStatus({
+          installed: ephemeralVmsSkillInstalled,
+          loading: ephemeralVmsSkillLoading
+        })
+      )
       next.set(
         'computer-use',
         getSkillNavInstallStatus({
@@ -640,6 +656,8 @@ function Settings(): React.JSX.Element {
   }, [
     computerUseSkillInstalled,
     computerUseSkillLoading,
+    ephemeralVmsSkillInstalled,
+    ephemeralVmsSkillLoading,
     modelStates,
     orchestrationSkillInstalled,
     orchestrationSkillLoading,
@@ -1487,6 +1505,22 @@ function Settings(): React.JSX.Element {
                       allowLocalRuntime={!isWebClient}
                     />
                   ) : null}
+                </SettingsSection>
+
+                <SettingsSection
+                  id="ephemeral-vms"
+                  title={translate(
+                    'auto.components.settings.Settings.ephemeralVms',
+                    'Ephemeral VMs'
+                  )}
+                  badge="Beta"
+                  description={translate(
+                    'auto.components.settings.Settings.ephemeralVmsDescription',
+                    'Use repo-owned recipes to create one temporary cloud runtime per workspace.'
+                  )}
+                  searchEntries={getSectionSearchEntries('ephemeral-vms')}
+                >
+                  {isSectionMounted('ephemeral-vms') ? <EphemeralVmsPane /> : null}
                 </SettingsSection>
 
                 {showDesktopOnlySettings ? (

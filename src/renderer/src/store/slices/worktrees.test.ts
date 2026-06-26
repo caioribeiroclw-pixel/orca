@@ -77,6 +77,10 @@ const mockApi = {
   },
   runtimeEnvironments: {
     call: runtimeEnvironmentTransportCall
+  },
+  ephemeralVm: {
+    cancelProvision: vi.fn().mockResolvedValue({ cancelled: true }),
+    cleanup: vi.fn().mockResolvedValue({})
   }
 }
 
@@ -262,6 +266,8 @@ describe('setActiveWorktree focus handling', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetRemoteRuntimeMocks()
+    mockApi.ephemeralVm.cancelProvision.mockResolvedValue({ cancelled: true })
+    mockApi.ephemeralVm.cleanup.mockResolvedValue({})
   })
 
   it('moves focus out of a registered webview before switching worktrees', () => {
@@ -5115,6 +5121,7 @@ function makePendingCreation(
     creationId,
     phase: 'fetching',
     status: 'creating',
+    startedAt: 1000,
     indeterminate: false,
     loaderVisible: false,
     request: {
@@ -5237,6 +5244,38 @@ describe('pending worktree creation state', () => {
 
     store.getState().removePendingWorktreeCreation('c2')
     expect(store.getState().activePendingCreationId).toBeNull()
+  })
+
+  it('removePendingWorktreeCreation cancels active VM provisioning', () => {
+    const store = createTestStore()
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        phase: 'provisioning-vm'
+      })
+    )
+
+    store.getState().removePendingWorktreeCreation('c1')
+
+    expect(mockApi.ephemeralVm.cancelProvision).toHaveBeenCalledWith({ provisionId: 'c1' })
+    expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined()
+  })
+
+  it('removePendingWorktreeCreation cleans up a provisioned VM runtime', () => {
+    const store = createTestStore()
+    store.getState().beginPendingWorktreeCreation(
+      makePendingCreation('c1', {
+        phase: 'fetching',
+        request: {
+          ...makePendingCreation('c1').request,
+          ephemeralVmRuntimeId: 'runtime-1'
+        }
+      })
+    )
+
+    store.getState().removePendingWorktreeCreation('c1')
+
+    expect(mockApi.ephemeralVm.cleanup).toHaveBeenCalledWith({ runtimeId: 'runtime-1' })
+    expect(store.getState().pendingWorktreeCreations.c1).toBeUndefined()
   })
 
   it('setActivePendingWorktreeCreation ignores unknown ids but always accepts null', () => {

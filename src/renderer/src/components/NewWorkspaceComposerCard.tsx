@@ -15,6 +15,8 @@ import {
   Settings2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Command, CommandEmpty, CommandItem, CommandList } from '@/components/ui/command'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type RepoCombobox from '@/components/repo/RepoCombobox'
 import AgentCombobox from '@/components/agent/AgentCombobox'
@@ -35,6 +37,7 @@ import type {
   GitHubWorkItem,
   GitLabWorkItem,
   LinearIssue,
+  OrcaHooks,
   SparsePreset,
   TuiAgent
 } from '../../../shared/types'
@@ -53,8 +56,10 @@ import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { translate } from '@/i18n/i18n'
 
 type RepoOption = React.ComponentProps<typeof RepoCombobox>['repos'][number]
+type EphemeralVmRecipeOption = NonNullable<OrcaHooks['vmRecipes']>[number]
 const EMPTY_PROJECT_OPTIONS: NewWorkspaceProjectOption[] = []
 const EMPTY_PROJECT_HOST_SETUP_OPTIONS: ProjectHostSetupOption[] = []
+const EMPTY_EPHEMERAL_VM_RECIPES: EphemeralVmRecipeOption[] = []
 
 type NewWorkspaceComposerCardProps = {
   contextualTourSource?: string
@@ -74,6 +79,10 @@ type NewWorkspaceComposerCardProps = {
   projectHostSetupOptions?: ProjectHostSetupOption[]
   selectedProjectHostSetupId?: string | null
   onProjectHostSetupChange?: (setupId: string) => void
+  ephemeralVmRecipes?: EphemeralVmRecipeOption[]
+  selectedEphemeralVmRecipeId?: string | null
+  onEphemeralVmRecipeChange?: (recipeId: string | null) => void
+  ephemeralVmRecipeError?: string | null
   repoBackedSearchRepos?: RepoOption[]
   repoBackedSourcesDisabled?: boolean
   allowSmartNameAddProject?: boolean
@@ -177,6 +186,125 @@ const SSH_STATUS_LABELS: Partial<Record<SshConnectionStatus, string>> = {
 
 function getSshStatusLabel(status: SshConnectionStatus): string {
   return SSH_STATUS_LABELS[status] ?? status
+}
+
+function getRecipeCommandDisplay(command: string): string {
+  const trimmed = command.trim()
+  const quoted = trimmed.match(/^"([^"]+)"/) ?? trimmed.match(/^'([^']+)'/)
+  return quoted?.[1] ?? trimmed.split(/\s+/)[0] ?? trimmed
+}
+
+function getRecipeCleanupLabel(recipe: EphemeralVmRecipeOption): string {
+  if (recipe.cleanupDisabled) {
+    return translate('auto.components.NewWorkspaceComposerCard.cleanupDisabled', 'cleanup disabled')
+  }
+  if (recipe.cleanup) {
+    return translate(
+      'auto.components.NewWorkspaceComposerCard.cleanupConfigured',
+      'cleanup configured'
+    )
+  }
+  return translate('auto.components.NewWorkspaceComposerCard.noCleanupConfigured', 'no cleanup')
+}
+
+type EphemeralVmRecipeComboboxProps = {
+  recipes: EphemeralVmRecipeOption[]
+  value: string | null
+  onValueChange?: (recipeId: string | null) => void
+}
+
+function EphemeralVmRecipeCombobox({
+  recipes,
+  value,
+  onValueChange
+}: EphemeralVmRecipeComboboxProps): React.JSX.Element {
+  const [open, setOpen] = React.useState(false)
+  const selected = recipes.find((recipe) => recipe.id === value) ?? null
+  const existingHostLabel = translate(
+    'auto.components.NewWorkspaceComposerCard.existingHost',
+    'Selected host'
+  )
+
+  const handleSelect = React.useCallback(
+    (recipeId: string | null): void => {
+      onValueChange?.(recipeId)
+      setOpen(false)
+    },
+    [onValueChange]
+  )
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="h-9 w-full justify-between border-input px-3 text-sm font-normal focus:border-ring focus:ring-[3px] focus:ring-ring/50"
+        >
+          <span className="min-w-0 truncate">{selected?.name ?? existingHostLabel}</span>
+          <ChevronDown className="size-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-[var(--radix-popover-trigger-width)] min-w-[18rem] p-0"
+      >
+        <Command value={selected?.id ?? '__existing_host__'}>
+          <CommandList>
+            <CommandEmpty>
+              {translate(
+                'auto.components.NewWorkspaceComposerCard.noVmRecipes',
+                'No VM recipes found.'
+              )}
+            </CommandEmpty>
+            <CommandItem
+              value="__existing_host__"
+              onSelect={() => handleSelect(null)}
+              className="items-center gap-2 px-3 py-2"
+            >
+              <Check
+                className={cn(
+                  'size-4 text-foreground',
+                  selected === null ? 'opacity-100' : 'opacity-0'
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm">{existingHostLabel}</div>
+              </div>
+            </CommandItem>
+            {recipes.map((recipe) => (
+              <CommandItem
+                key={recipe.id}
+                value={recipe.id}
+                onSelect={() => handleSelect(recipe.id)}
+                className="items-center gap-2 px-3 py-2"
+              >
+                <Check
+                  className={cn(
+                    'size-4 text-foreground',
+                    recipe.id === selected?.id ? 'opacity-100' : 'opacity-0'
+                  )}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm">{recipe.name}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {getRecipeCommandDisplay(recipe.command)} · {getRecipeCleanupLabel(recipe)}
+                  </div>
+                  {recipe.description ? (
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {recipe.description}
+                    </div>
+                  ) : null}
+                </div>
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 function SetupCommandPreview({
@@ -315,6 +443,10 @@ export default function NewWorkspaceComposerCard({
   projectHostSetupOptions = EMPTY_PROJECT_HOST_SETUP_OPTIONS,
   selectedProjectHostSetupId = null,
   onProjectHostSetupChange,
+  ephemeralVmRecipes = EMPTY_EPHEMERAL_VM_RECIPES,
+  selectedEphemeralVmRecipeId = null,
+  onEphemeralVmRecipeChange,
+  ephemeralVmRecipeError = null,
   repoBackedSearchRepos,
   repoBackedSourcesDisabled = false,
   allowSmartNameAddProject = true,
@@ -620,6 +752,27 @@ export default function NewWorkspaceComposerCard({
                 onValueChange={handleProjectHostSetupChange}
               />
             </div>
+          ) : null}
+          {ephemeralVmRecipes.length > 0 ? (
+            <div className="space-y-1">
+              <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
+                {translate('auto.components.NewWorkspaceComposerCard.vmRecipe', 'VM recipe')}
+              </label>
+              <EphemeralVmRecipeCombobox
+                recipes={ephemeralVmRecipes}
+                value={selectedEphemeralVmRecipeId}
+                onValueChange={onEphemeralVmRecipeChange}
+              />
+              {ephemeralVmRecipeError ? (
+                <p className="whitespace-pre-line text-[11px] text-destructive">
+                  {ephemeralVmRecipeError}
+                </p>
+              ) : null}
+            </div>
+          ) : ephemeralVmRecipeError ? (
+            <p className="whitespace-pre-line text-[11px] text-destructive">
+              {ephemeralVmRecipeError}
+            </p>
           ) : null}
           {selectedRepoRequiresConnection && selectedRepoConnectionId ? (
             <div

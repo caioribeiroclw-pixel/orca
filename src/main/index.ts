@@ -2,8 +2,8 @@
    it owns app lifecycle, service wiring, window creation, and hook/daemon
    startup. Splitting by line count would fragment tightly coupled startup
    logic across files without a cleaner ownership seam. */
-import { existsSync } from 'fs'
-import { join } from 'path'
+import { existsSync, statSync } from 'fs'
+import { isAbsolute, join } from 'path'
 import os from 'node:os'
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
@@ -1010,6 +1010,8 @@ type ServeOptions = {
   pairingAddress: string | null
   noPairing: boolean
   mobilePairing: boolean
+  recipeJson: boolean
+  projectRoot: string | null
 }
 
 function getServeOptions(argv = process.argv): ServeOptions {
@@ -1035,7 +1037,9 @@ function getServeOptions(argv = process.argv): ServeOptions {
     ...(wsPort !== undefined ? { wsPort } : {}),
     pairingAddress: valueAfter('--serve-pairing-address'),
     noPairing: argv.includes('--serve-no-pairing'),
-    mobilePairing: argv.includes('--serve-mobile-pairing')
+    mobilePairing: argv.includes('--serve-mobile-pairing'),
+    recipeJson: argv.includes('--serve-recipe-json'),
+    projectRoot: valueAfter('--serve-project-root')
   }
 }
 
@@ -1060,6 +1064,18 @@ async function printServeReady(options: ServeOptions): Promise<void> {
   if (!runtime || !runtimeRpc) {
     throw new Error('Runtime server must be initialized before printing serve readiness')
   }
+  if (options.recipeJson) {
+    if (!options.projectRoot) {
+      throw new Error('--serve-recipe-json requires --serve-project-root')
+    }
+    if (!isAbsolute(options.projectRoot)) {
+      throw new Error(`--serve-project-root must be absolute: ${options.projectRoot}`)
+    }
+    const projectRootStats = statSync(options.projectRoot)
+    if (!projectRootStats.isDirectory()) {
+      throw new Error(`--serve-project-root must be a directory: ${options.projectRoot}`)
+    }
+  }
   const endpoint = runtimeRpc.getWebSocketEndpoint()
   const pairing = options.noPairing
     ? ({ available: false } as const)
@@ -1072,6 +1088,19 @@ async function printServeReady(options: ServeOptions): Promise<void> {
     pairing.available && options.mobilePairing
       ? await renderTerminalPairingQr(pairing.pairingUrl)
       : null
+  if (options.recipeJson) {
+    if (!pairing.available) {
+      throw new Error('Recipe JSON output requires runtime pairing to be available')
+    }
+    console.log(
+      JSON.stringify({
+        schemaVersion: 1,
+        pairingCode: pairing.pairingUrl,
+        projectRoot: options.projectRoot
+      })
+    )
+    return
+  }
   if (options.json) {
     console.log(
       JSON.stringify({

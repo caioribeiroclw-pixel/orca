@@ -15,7 +15,7 @@ import type { TaskSourceContext, WorkspaceRunContext } from '../../../shared/tas
  *  `fetching` covers the base-ref git fetch; `creating` covers `git worktree
  *  add`. The remote/runtime path emits neither, so consumers must tolerate a
  *  phase that never advances past `fetching`. */
-export type WorktreeCreationPhase = 'fetching' | 'creating'
+export type WorktreeCreationPhase = 'provisioning-vm' | 'fetching' | 'creating'
 
 export type WorktreeCreationProgressMode = 'stepped' | 'indeterminate'
 
@@ -35,6 +35,16 @@ export type WorktreeCreationRequest = {
    *  repoId keeps old create APIs working, while this records the project-first
    *  host intent for retry, diagnostics, and future metadata writes. */
   workspaceRunContext?: WorkspaceRunContext | null
+  /** Ephemeral VM runtime provisioned for this create. Used for best-effort
+   *  cleanup if Orca fails before the workspace owns the runtime. */
+  ephemeralVmRuntimeId?: string
+  /** Recipe to provision before creating the worktree. Kept serializable so
+   *  retry can rerun the recipe after a failed create. */
+  ephemeralVmRecipe?: {
+    sourceRepoId: string
+    recipeId: string
+    projectId: string
+  }
   /** Captured from the repo/run owner at submit time so Retry keeps the same
    *  local-vs-runtime progress behavior even if the focused runtime changes. */
   worktreeCreateProgressMode?: WorktreeCreationProgressMode
@@ -86,6 +96,7 @@ export type PendingWorktreeCreation = {
   creationId: string
   phase: WorktreeCreationPhase
   status: 'creating' | 'error'
+  startedAt: number
   /** True when the create runs over a remote/runtime target that emits no phase
    *  progress — the panel shows a single indeterminate spinner rather than a
    *  stepped checklist that would freeze on the first step. */
@@ -95,6 +106,7 @@ export type PendingWorktreeCreation = {
    *  from create start through terminal handoff. */
   loaderVisible: boolean
   error?: string
+  provisioningLog?: string
   request: WorktreeCreationRequest
 }
 
@@ -104,6 +116,9 @@ export type PendingWorktreeCreation = {
 export function getCreationProgressLabel(
   entry: Pick<PendingWorktreeCreation, 'phase' | 'indeterminate'>
 ): string {
+  if (entry.phase === 'provisioning-vm') {
+    return 'Provisioning VM…'
+  }
   if (entry.indeterminate) {
     return 'Setting up your workspace…'
   }

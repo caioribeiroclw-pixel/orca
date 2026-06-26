@@ -1079,6 +1079,20 @@ async function persistWorktreeMeta(
   )
 }
 
+async function cleanupEphemeralVmRuntimesForDeletedWorkspace(workspaceId: string): Promise<void> {
+  try {
+    const runtimes = await window.api.ephemeralVm.listRuntimes()
+    const matchingRuntimes = runtimes.filter(
+      (runtime) => runtime.workspaceId === workspaceId && runtime.cleanupStatus !== 'succeeded'
+    )
+    for (const runtime of matchingRuntimes) {
+      await window.api.ephemeralVm.cleanup({ runtimeId: runtime.id })
+    }
+  } catch (error) {
+    console.error('Failed to clean up ephemeral VM runtime for deleted workspace:', error)
+  }
+}
+
 async function resolveGitHubReviewPushTarget(
   settings: AppState['settings'],
   repoId: string,
@@ -2353,8 +2367,31 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
 
   removePendingWorktreeCreation: (creationId) => {
     set((s) => {
-      if (!s.pendingWorktreeCreations[creationId]) {
+      const entry = s.pendingWorktreeCreations[creationId]
+      if (!entry) {
         return {}
+      }
+      if (
+        entry.phase === 'provisioning-vm' &&
+        typeof window !== 'undefined' &&
+        window.api?.ephemeralVm?.cancelProvision
+      ) {
+        void window.api.ephemeralVm.cancelProvision({ provisionId: creationId }).catch(() => {
+          // Best effort: dismissing the pending surface should not be blocked by
+          // an already-finished or unreachable provisioning process.
+        })
+      }
+      if (
+        entry.request.ephemeralVmRuntimeId &&
+        typeof window !== 'undefined' &&
+        window.api?.ephemeralVm?.cleanup
+      ) {
+        void window.api.ephemeralVm
+          .cleanup({ runtimeId: entry.request.ephemeralVmRuntimeId })
+          .catch(() => {
+            // Best effort: cancellation should not block on provider cleanup,
+            // and the Settings runtime list still exposes retry/manual cleanup.
+          })
       }
       const { [creationId]: _removed, ...rest } = s.pendingWorktreeCreations
       return {
@@ -2405,6 +2442,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             { worktree: toRuntimeWorktreeSelector(worktreeId), force, runHooks: !skipArchive },
             { timeoutMs: 60_000 }
           ))
+      await cleanupEphemeralVmRuntimesForDeletedWorkspace(worktreeId)
 
       const worktreeDisplayName = worktreeBeforeRemoval?.displayName?.trim()
       if (worktreeDisplayName) {

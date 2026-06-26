@@ -1872,12 +1872,29 @@ export type OrcaHooks = {
   }
   issueCommand?: string // Shared default command for linked GitHub issues
   defaultTabs?: OrcaDefaultTabTemplate[] // Terminal tabs to create once for a new worktree
+  vmRecipes?: OrcaVmRecipe[] // Project-scoped ephemeral VM recipes
+  vmRecipeDiagnostics?: OrcaVmRecipeDiagnostic[] // Non-fatal validation issues from vmRecipes
 }
 
 export type OrcaDefaultTabTemplate = {
   title?: string
   color?: string
   command?: string
+}
+
+export type OrcaVmRecipe = {
+  id: string
+  name: string
+  command: string
+  description?: string
+  cleanup?: string
+  cleanupDisabled?: boolean
+}
+
+export type OrcaVmRecipeDiagnostic = {
+  index: number
+  field?: string
+  message: string
 }
 
 export type RepoHookSettings = {
@@ -3308,6 +3325,7 @@ export type PersistedTrustedOrcaHookRepo = {
   setup?: PersistedTrustedOrcaHookEntry
   archive?: PersistedTrustedOrcaHookEntry
   issueCommand?: PersistedTrustedOrcaHookEntry
+  vmRecipe?: PersistedTrustedOrcaHookEntry
 }
 
 export type PersistedTrustedOrcaHooks = Record<string, PersistedTrustedOrcaHookRepo>

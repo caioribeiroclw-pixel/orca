@@ -1,5 +1,7 @@
 /* eslint-disable max-lines -- Why: CLI parser tests share one mocked runtime client and fixture queue; splitting this file would duplicate setup and make command coverage harder to audit. */
 import path from 'path'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'fs'
+import { tmpdir } from 'os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -85,8 +87,19 @@ vi.mock('child_process', async () => {
   const { EventEmitter } = await import('events')
   return {
     spawn: spawnMock.mockImplementation(() => {
-      const child = new EventEmitter()
-      process.nextTick(() => child.emit('exit', 0, null))
+      const child = Object.assign(new EventEmitter(), {
+        stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stdin: {
+          write: vi.fn(),
+          end: vi.fn()
+        },
+        kill: vi.fn()
+      })
+      process.nextTick(() => {
+        child.emit('exit', 0, null)
+        child.emit('close', 0, null)
+      })
       return child
     })
   }
@@ -101,6 +114,7 @@ import {
 import { GLOBAL_FLAGS } from './args'
 import { RuntimeRpcFailureError } from './runtime-client'
 import { buildWorktree, okFixture, queueFixtures, worktreeListFixture } from './test-fixtures'
+import { encodePairingOffer, PAIRING_OFFER_VERSION } from '../shared/pairing'
 
 describe('COMMAND_SPECS collision check', () => {
   it('has no duplicate command paths', () => {
@@ -1797,7 +1811,9 @@ describe('orca cli worktree awareness', () => {
       port: '6768',
       pairingAddress: '100.64.1.20',
       noPairing: true,
-      mobilePairing: false
+      mobilePairing: false,
+      recipeJson: false,
+      projectRoot: null
     })
   })
 
@@ -1814,8 +1830,267 @@ describe('orca cli worktree awareness', () => {
       port: null,
       pairingAddress: '100.64.1.20',
       noPairing: false,
-      mobilePairing: true
+      mobilePairing: true,
+      recipeJson: false,
+      projectRoot: null
     })
+  })
+
+  it('starts a recipe JSON headless server for VM recipes', async () => {
+    serveOrcaAppMock.mockResolvedValue(0)
+
+    await main(
+      [
+        'serve',
+        '--pairing-address',
+        'wss://sandbox.example.com',
+        '--project-root',
+        '/workspace/repo',
+        '--recipe-json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(serveOrcaAppMock).toHaveBeenCalledWith({
+      json: false,
+      port: null,
+      pairingAddress: 'wss://sandbox.example.com',
+      noPairing: false,
+      mobilePairing: false,
+      recipeJson: true,
+      projectRoot: '/workspace/repo'
+    })
+  })
+
+  it('runs vm recipe doctor locally without contacting the app runtime', async () => {
+    const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-'))
+    try {
+      mkdirSync(path.join(repoPath, 'scripts', 'orca-vm'), { recursive: true })
+      writeFileSync(path.join(repoPath, 'scripts', 'orca-vm', 'start.sh'), '#!/bin/sh\n')
+      writeFileSync(path.join(repoPath, 'scripts', 'orca-vm', 'cleanup.sh'), '#!/bin/sh\n')
+      writeFileSync(
+        path.join(repoPath, 'orca.yaml'),
+        [
+          'vmRecipes:',
+          '  - id: cloud-sandbox',
+          '    name: Cloud Sandbox',
+          '    command: ./scripts/orca-vm/start.sh',
+          '    cleanup: ./scripts/orca-vm/cleanup.sh'
+        ].join('\n')
+      )
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await main(['vm', 'recipe', 'doctor', 'cloud-sandbox', '--repo-path', repoPath, '--json'])
+
+      const output = JSON.parse(String(logSpy.mock.calls[0][0])) as {
+        ok: boolean
+        checks: { id: string; status: string }[]
+      }
+      if (!output.ok) {
+        throw new Error(JSON.stringify(output))
+      }
+      expect(output.ok).toBe(true)
+      expect(output.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'orca_yaml.parse', status: 'pass' }),
+          expect.objectContaining({ id: 'recipe.exists', status: 'pass' }),
+          expect.objectContaining({ id: 'recipe.command', status: 'pass' }),
+          expect.objectContaining({ id: 'recipe.cleanup', status: 'pass' })
+        ])
+      )
+      expect(callMock).not.toHaveBeenCalled()
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('warns when vm recipe doctor finds no cleanup hook', async () => {
+    const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-'))
+    try {
+      mkdirSync(path.join(repoPath, 'scripts', 'orca-vm'), { recursive: true })
+      writeFileSync(path.join(repoPath, 'scripts', 'orca-vm', 'start.sh'), '#!/bin/sh\n')
+      writeFileSync(
+        path.join(repoPath, 'orca.yaml'),
+        [
+          'vmRecipes:',
+          '  - id: manual-sandbox',
+          '    name: Manual Sandbox',
+          '    command: ./scripts/orca-vm/start.sh'
+        ].join('\n')
+      )
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await main(['vm', 'recipe', 'doctor', 'manual-sandbox', '--repo-path', repoPath, '--json'])
+
+      const output = JSON.parse(String(logSpy.mock.calls[0][0])) as {
+        ok: boolean
+        checks: { id: string; status: string; remediation?: string }[]
+      }
+      if (!output.ok) {
+        throw new Error(JSON.stringify(output))
+      }
+      expect(output.ok).toBe(true)
+      expect(output.checks).toContainEqual(
+        expect.objectContaining({
+          id: 'recipe.cleanup',
+          status: 'warn',
+          remediation: 'Add cleanup or explicitly set cleanup: none.'
+        })
+      )
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('runs vm recipe doctor provision mode and invokes cleanup', async () => {
+    const repoPath = mkdtempSync(path.join(tmpdir(), 'orca-vm-doctor-provision-'))
+    const pairingCode = encodePairingOffer({
+      v: PAIRING_OFFER_VERSION,
+      endpoint: 'ws://sandbox.example.com:6767',
+      deviceToken: 'token',
+      publicKeyB64: 'public-key'
+    })
+    try {
+      mkdirSync(path.join(repoPath, 'scripts', 'orca-vm'), { recursive: true })
+      writeFileSync(
+        path.join(repoPath, 'scripts', 'orca-vm', 'start.js'),
+        [
+          'console.log(JSON.stringify({',
+          '  schemaVersion: 1,',
+          `  pairingCode: ${JSON.stringify(pairingCode)},`,
+          "  projectRoot: '/workspace/repo'",
+          '}))'
+        ].join('\n')
+      )
+      writeFileSync(
+        path.join(repoPath, 'scripts', 'orca-vm', 'cleanup.js'),
+        [
+          "const fs = require('fs')",
+          "const input = fs.readFileSync(0, 'utf8')",
+          'const payload = JSON.parse(input)',
+          "fs.writeFileSync('cleanup-ran.json', JSON.stringify(payload))"
+        ].join('\n')
+      )
+      writeFileSync(
+        path.join(repoPath, 'orca.yaml'),
+        [
+          'vmRecipes:',
+          '  - id: cloud-sandbox',
+          '    name: Cloud Sandbox',
+          `    command: ${JSON.stringify(`${process.execPath} ./scripts/orca-vm/start.js`)}`,
+          `    cleanup: ${JSON.stringify(`${process.execPath} ./scripts/orca-vm/cleanup.js`)}`
+        ].join('\n')
+      )
+      const { EventEmitter } = await import('events')
+      const startChild = Object.assign(new EventEmitter(), {
+        stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stdin: { write: vi.fn(), end: vi.fn() },
+        kill: vi.fn()
+      })
+      const cleanupChild = Object.assign(new EventEmitter(), {
+        stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+        stdin: { write: vi.fn(), end: vi.fn() },
+        kill: vi.fn()
+      })
+      spawnMock
+        .mockImplementationOnce(() => {
+          process.nextTick(() => {
+            startChild.stdout.emit(
+              'data',
+              JSON.stringify({
+                schemaVersion: 1,
+                pairingCode,
+                projectRoot: '/workspace/repo'
+              })
+            )
+            startChild.emit('exit', 0, null)
+            startChild.emit('close', 0, null)
+          })
+          return startChild
+        })
+        .mockImplementationOnce(() => {
+          process.nextTick(() => {
+            cleanupChild.emit('exit', 0, null)
+            cleanupChild.emit('close', 0, null)
+          })
+          return cleanupChild
+        })
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+      await main([
+        'vm',
+        'recipe',
+        'doctor',
+        'cloud-sandbox',
+        '--repo-path',
+        repoPath,
+        '--provision',
+        '--json'
+      ])
+
+      const output = JSON.parse(String(logSpy.mock.calls[0][0])) as {
+        ok: boolean
+        checks: { id: string; status: string }[]
+      }
+      if (!output.ok) {
+        throw new Error(JSON.stringify(output))
+      }
+      expect(output.ok).toBe(true)
+      expect(output.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'recipe.provision', status: 'pass' }),
+          expect.objectContaining({ id: 'recipe.result.endpoint.public_ws', status: 'warn' }),
+          expect.objectContaining({ id: 'recipe.result.project_root', status: 'pass' }),
+          expect.objectContaining({ id: 'recipe.cleanup.run', status: 'pass' })
+        ])
+      )
+      const cleanupPayload = JSON.parse(
+        String(vi.mocked(cleanupChild.stdin.end).mock.calls[0]?.[0])
+      ) as { recipeId: string; recipeResult: { projectRoot: string } }
+      expect(cleanupPayload).toMatchObject({
+        recipeId: 'cloud-sandbox',
+        recipeResult: { projectRoot: '/workspace/repo' }
+      })
+    } finally {
+      rmSync(repoPath, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects recipe JSON output without a project root', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const priorExitCode = process.exitCode
+
+    await main(['serve', '--recipe-json'], '/tmp/repo')
+
+    expect(serveOrcaAppMock).not.toHaveBeenCalled()
+    expect([...logSpy.mock.calls, ...errSpy.mock.calls].flat().join('\n')).toContain(
+      'Recipe JSON output requires --project-root.'
+    )
+    expect(process.exitCode).toBe(1)
+
+    process.exitCode = priorExitCode
+  })
+
+  it('rejects recipe JSON output with mobile pairing', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const priorExitCode = process.exitCode
+
+    await main(
+      ['serve', '--recipe-json', '--project-root', '/workspace/repo', '--mobile-pairing'],
+      '/tmp/repo'
+    )
+
+    expect(serveOrcaAppMock).not.toHaveBeenCalled()
+    expect([...logSpy.mock.calls, ...errSpy.mock.calls].flat().join('\n')).toContain(
+      'Recipe JSON output requires runtime pairing; remove --mobile-pairing.'
+    )
+    expect(process.exitCode).toBe(1)
+
+    process.exitCode = priorExitCode
   })
 
   it('rejects contradictory serve pairing flags', async () => {

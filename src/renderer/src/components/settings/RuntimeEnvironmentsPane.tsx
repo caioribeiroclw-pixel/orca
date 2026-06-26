@@ -44,6 +44,7 @@ import {
   DialogTitle
 } from '../ui/dialog'
 import { RuntimePairingUrlGenerator } from './RuntimePairingUrlGenerator'
+import { EphemeralVmRuntimesSection } from './EphemeralVmRuntimesSection'
 import {
   getRuntimeEnvironmentsSearchEntry,
   getWebRuntimeEnvironmentsSearchEntry
@@ -989,6 +990,8 @@ export function RuntimeEnvironmentsPane({
           )}
         </div>
       </div>
+
+      <EphemeralVmRuntimesSection />
 
       <div data-settings-section="default-runtime">
         <Button

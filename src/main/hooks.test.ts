@@ -193,6 +193,99 @@ describe('parseOrcaYaml', () => {
       defaultTabs: [{ title: 'Server', command: 'pnpm dev' }]
     })
   })
+
+  it('parses vmRecipes from orca.yaml', () => {
+    const yaml = [
+      'vmRecipes:',
+      '  - id: cloud-sandbox',
+      '    name: Cloud Sandbox',
+      '    description: Starts a per-workspace VM.',
+      '    command: ./scripts/orca-vm/start-cloud-sandbox.sh',
+      '    cleanup: ./scripts/orca-vm/cleanup-cloud-sandbox.sh'
+    ].join('\n')
+
+    expect(parseOrcaYaml(yaml)).toEqual({
+      scripts: {},
+      vmRecipes: [
+        {
+          id: 'cloud-sandbox',
+          name: 'Cloud Sandbox',
+          description: 'Starts a per-workspace VM.',
+          command: './scripts/orca-vm/start-cloud-sandbox.sh',
+          cleanup: './scripts/orca-vm/cleanup-cloud-sandbox.sh'
+        }
+      ]
+    })
+  })
+
+  it('parses vmRecipes with cleanup explicitly disabled', () => {
+    const yaml = [
+      'vmRecipes:',
+      '  - id: manual-sandbox',
+      '    name: Manual Sandbox',
+      '    command: ./scripts/orca-vm/start-manual-sandbox.sh',
+      '    cleanup: none'
+    ].join('\n')
+
+    expect(parseOrcaYaml(yaml)).toEqual({
+      scripts: {},
+      vmRecipes: [
+        {
+          id: 'manual-sandbox',
+          name: 'Manual Sandbox',
+          command: './scripts/orca-vm/start-manual-sandbox.sh',
+          cleanupDisabled: true
+        }
+      ]
+    })
+  })
+
+  it('drops invalid and duplicate vmRecipes', () => {
+    const yaml = [
+      'vmRecipes:',
+      '  - id: cloud-sandbox',
+      '    name: Cloud Sandbox',
+      '    command: ./scripts/orca-vm/start-cloud-sandbox.sh',
+      '  - id: cloud-sandbox',
+      '    name: Duplicate Cloud Sandbox',
+      '    command: ./scripts/orca-vm/start-duplicate.sh',
+      '  - id: missing-command',
+      '    name: Missing Command',
+      '  - name: Missing Id',
+      '    command: ./scripts/orca-vm/start-missing-id.sh',
+      '  - id: "Cloud Sandbox"',
+      '    name: Unsafe Id',
+      '    command: ./scripts/orca-vm/start-unsafe-id.sh',
+      '  - 42'
+    ].join('\n')
+
+    expect(parseOrcaYaml(yaml)).toEqual({
+      scripts: {},
+      vmRecipes: [
+        {
+          id: 'cloud-sandbox',
+          name: 'Cloud Sandbox',
+          command: './scripts/orca-vm/start-cloud-sandbox.sh'
+        }
+      ],
+      vmRecipeDiagnostics: [
+        {
+          index: 1,
+          field: 'id',
+          message: 'Duplicate recipe id "cloud-sandbox". Recipe ids must be unique.'
+        },
+        { index: 2, field: 'command', message: 'Recipe "missing-command" is missing command.' },
+        { index: 3, field: 'id', message: 'Recipe id is required.' },
+        {
+          index: 4,
+          field: 'id',
+          message:
+            'Invalid recipe id "Cloud Sandbox". Use 1-64 lowercase letters, numbers, dots, underscores, or hyphens, starting with a letter or number.'
+        },
+        { index: 5, message: 'Recipe entry must be a mapping.' }
+      ]
+    })
+  })
 })
 
 describe('hasUnrecognizedOrcaYamlKeys', () => {
@@ -232,7 +325,11 @@ describe('hasUnrecognizedOrcaYamlKeys', () => {
         'issueCommand: |',
         '  claude -p "test"',
         'defaultTabs:',
-        '  - title: Claude'
+        '  - title: Claude',
+        'vmRecipes:',
+        '  - id: cloud-sandbox',
+        '    name: Cloud Sandbox',
+        '    command: ./scripts/orca-vm/start-cloud-sandbox.sh'
       ].join('\n')
     )
 

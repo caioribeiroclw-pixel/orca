@@ -22,6 +22,14 @@ export default function WorktreeCreationPanel({
   reserveCollapsedSidebarHeaderSpace?: boolean
 }): React.JSX.Element | null {
   const entry = useAppStore((s) => s.pendingWorktreeCreations[creationId])
+  const [now, setNow] = React.useState(() => Date.now())
+  React.useEffect(() => {
+    if (!entry || entry.status !== 'creating') {
+      return
+    }
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [entry])
   if (!entry) {
     return null
   }
@@ -29,6 +37,14 @@ export default function WorktreeCreationPanel({
   const dismiss = (): void => useAppStore.getState().removePendingWorktreeCreation(creationId)
   const isError = entry.status === 'error'
   const title = entry.request.displayName || entry.request.name
+  const elapsedLabel = formatElapsedTime(now - entry.startedAt)
+  const provisioningCleanupLabel =
+    entry.phase === 'provisioning-vm'
+      ? translate(
+          'auto.components.worktree.creation.WorktreeCreationPanel.vmCancelCleanupHint',
+          'Cancel stops provisioning. Cleanup runs if a runtime was created.'
+        )
+      : null
 
   return (
     <div className="absolute inset-0 flex flex-col bg-background">
@@ -118,12 +134,33 @@ export default function WorktreeCreationPanel({
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 shrink-0 animate-spin" />
-            <span>{getCreationProgressLabel(entry)}</span>
+          <div className="flex min-h-0 max-w-3xl flex-col gap-2 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span>{getCreationProgressLabel(entry)}</span>
+              <span className="text-muted-foreground/70">{elapsedLabel}</span>
+            </div>
+            {provisioningCleanupLabel ? (
+              <div className="text-[11px] text-muted-foreground">{provisioningCleanupLabel}</div>
+            ) : null}
+            {entry.phase === 'provisioning-vm' && entry.provisioningLog ? (
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-sm border border-border bg-muted/30 p-2 font-mono text-[11px] leading-4 text-muted-foreground">
+                {entry.provisioningLog}
+              </pre>
+            ) : null}
           </div>
         )}
       </div>
     </div>
   )
+}
+
+function formatElapsedTime(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes === 0) {
+    return `${seconds}s`
+  }
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`
 }

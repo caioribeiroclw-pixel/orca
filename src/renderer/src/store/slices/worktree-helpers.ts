@@ -163,8 +163,11 @@ export type WorktreeSlice = {
     patch: {
       phase?: WorktreeCreationPhase
       status?: 'creating' | 'error'
+      startedAt?: number
       error?: string
       loaderVisible?: boolean
+      request?: PendingWorktreeCreation['request']
+      provisioningLog?: string
     }
   ) => void
   /** Drop a pending entry (on success or dismiss), clearing the active surface

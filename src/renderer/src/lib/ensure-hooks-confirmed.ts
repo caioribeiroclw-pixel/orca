@@ -34,6 +34,26 @@ function getSetupTrustContent(yamlHooks: OrcaHooks | null): string {
   return [yamlHooks?.scripts?.setup?.trim(), ...defaultTabCommands].filter(Boolean).join('\n\n')
 }
 
+function getVmRecipeTrustContent(yamlHooks: OrcaHooks | null): string {
+  return (yamlHooks?.vmRecipes ?? [])
+    .map((recipe) =>
+      [
+        `# vmRecipes.${recipe.id}`,
+        `name: ${recipe.name}`,
+        recipe.description ? `description: ${recipe.description}` : null,
+        `command: ${recipe.command}`,
+        recipe.cleanupDisabled
+          ? 'cleanup: none'
+          : recipe.cleanup
+            ? `cleanup: ${recipe.cleanup}`
+            : null
+      ]
+        .filter((entry): entry is string => entry !== null)
+        .join('\n')
+    )
+    .join('\n\n')
+}
+
 function settingsForHookRepoOwner(state: AppState, repoId: string): AppState['settings'] {
   const runtimeEnvironmentId = getRuntimeEnvironmentIdForRepo(state, repoId)
   // Why: hook inspection must follow the repo owner. SSH/local repos execute
@@ -91,7 +111,9 @@ export async function ensureHooksConfirmed(
         scriptContent =
           scriptKind === 'setup'
             ? getSetupTrustContent(yamlHooks)
-            : (yamlHooks?.scripts?.[scriptKind] ?? '').trim()
+            : scriptKind === 'vmRecipe'
+              ? getVmRecipeTrustContent(yamlHooks)
+              : (yamlHooks?.scripts?.[scriptKind] ?? '').trim()
       }
     } catch {
       // Fail closed: if we cannot inspect the script, we cannot trust it.
